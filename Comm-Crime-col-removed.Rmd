@@ -1,0 +1,373 @@
+---
+title: "FINAL Revised Group Project"
+author: "Theresa Van"
+date: "December 5, 2018"
+output: html_document
+---
+
+##Setting Up the Data
+```{r}
+#load data file into crime
+crime <- read.csv("communitiesandcrime.csv")
+
+#remove column with community names
+crime <- crime[,-4]
+```
+
+
+
+## Column-Removed Data Set
+
+ This version of the data set will work with all observations of the original data set and delete all predictors with '?'.
+```{r}
+#create an empty vector that will hold columns to be deleted
+removeCol <- c()
+
+#find which columns contain "?" and append the column number to removeCol vector
+for(i in 1:ncol(crime))
+{
+  if (length(which(crime[,i] == "?")) != 0)
+    removeCol <- c(removeCol, i)
+}
+
+#remove said columns
+crime <- crime[,-c(removeCol)]
+
+#forcing all predictors to be numeric
+for (i in 1:ncol(crime)){
+  crime[,i]<-as.numeric(crime[,i])
+}
+```
+
+We are now working with 102 predictors from the original 128.
+
+#####*Testing for collinearity:*
+
+We are going to use the VIF factor to detect multicollinearity. The code below will detect the predictor with the highest VIF value, remove it, recalculate the VIF values for all remaining predictors, and repeat until all the remaining predictors have a VIF value below 10.
+```{r}
+library(usdm)
+
+max.vif <- vif(crime)$VIF[which.max(vif(crime)$VIF)]
+
+while(max.vif >= 10)
+{
+  if(max.vif >= 10)
+    crime <- crime[,-which.max(vif(crime)$VIF)]
+  max.vif <- vif(crime)$VIF[which.max(vif(crime)$VIF)]
+}
+```
+
+After removing collinear variables, we are left with 59 predictors.
+
+#####*Splitting the data into a training set and a test set:*
+
+We split 50% of the data into a test set and the other 50% into a training set.
+```{r}
+set.seed(1)
+
+library(ISLR)
+# proprtion divided into training and test sets
+fractionTraining <- 0.5
+fractionTesting <- 0.5
+
+# gather sample size for training and test sets
+nTraining <- floor(fractionTraining*nrow(Default))
+nTest <- floor(fractionTesting*nrow(Default))
+
+# find indices for training and test sets
+indicesTraining <- sort(sample(1:nrow(Default),size=nTraining))
+indicesTesting <- setdiff(1:nrow(Default), indicesTraining)
+
+#creating the test set
+crimeTesting <- crime[-c(indicesTraining),]
+
+#creating the training set
+crimeTraining <- crime[-c(indicesTesting),]
+```
+
+
+##Fitting the full linear model.
+```{r}
+full.fit <- lm(ViolentCrimesPerPop~., data=crimeTraining)
+summary(full.fit)
+```
+
+###*Fitting the full linear model with state as an interaction term.*
+
+```{r}
+state.int.fit <- lm(ViolentCrimesPerPop~.+state:., data=crimeTraining)
+summary(state.int.fit)
+```
+
+The original full linear model has an R-squared value of 0.6814 and an adjusted R-squared value of 0.6621. The full linear model with state interaction terms has an R-squared value of 0.7074 and adjusted R-squared value of 0.6699. There is not a significant increase in R-squared and adjusted R-squared value so we decide not to use interaction terms as the tradeoff between interpretability and model accuracy suggest that it is not worth including.
+
+*Residual plots for full linear model*
+```{r}
+par(mfrow=c(2,2))
+plot(full.fit)
+```
+
+##Forward Stepwise Regression
+```{r}
+library(leaps)
+
+crime.forward <- regsubsets(ViolentCrimesPerPop~., data=crimeTraining, method = "forward", nvmax = 59, really.big = TRUE)
+
+resforward <- summary(crime.forward)
+
+par(mfrow=c(1,3))
+plot(1:58, resforward$cp, xlab = "Number of Predictors", ylab = "Cp")
+plot(1:58, resforward$bic, xlab = "Number of Predictors", ylab = "BIC")
+plot(1:58, resforward$adjr2, xlab = "Number of Predictors", ylab = "Adjusted R-squared")
+```
+```{r}
+which.min(resforward$cp) #tells us which n-variable model gives us the lowest Cp value
+```
+```{r}
+which.min(resforward$bic) #tells us which n-variable model gives us the lowest BIC value
+```
+```{r}
+which.max(resforward$adjr2) #tells us which n-variable model gives us the highest adjusted r-squared value
+```
+
+###**Model 1: best Cp model**
+This is a 26-variable model.
+```{r}
+add.cp <- c()
+for(i in 1:59)
+{
+  if(resforward$which[26,i] == "TRUE")
+    add.cp <- c(add.cp, names(crime[i-1]))
+}
+
+for(i in 1:length(add.cp))
+{
+  print(as.symbol(add.cp[i]))
+}
+```
+```{r}
+fit.cp <- lm(ViolentCrimesPerPop~state+racePctBlack+racePctHisp+agePct65up+pctUrban+pctWPubAsst+pctWRetire+IndianPerCap+AsianPerCap+PctEmplManu+PctEmplProfServ+MalePctDivorce+PctYoungKids2Par+PctTeen2Par+NumIlleg+PctRecentImmit+PctLargHouseFam+HousVacant+PctHousOccup+PctHousOwnOcc+PctVacantBoarded+MedRentPctHousInc+MedOwnCostPctIncNoMtg+NumStreet+PctSameCity85+LemasPctOfficDrugUn, data=crimeTraining)
+summary(fit.cp)
+```
+
+*Residual plots for m1*
+```{r}
+par(mfrow=c(2,2))
+plot(fit.cp)
+```
+
+**Cp, BIC, and adjusted R-squared**
+```{r}
+cat("Cp: ", resforward$cp[26])
+```
+```{r}
+cat("BIC: ", resforward$bic[26])
+```
+```{r}
+cat("adjusted R-squared: ", resforward$adjr2[26])
+```
+
+**Validation set error**
+```{r}
+mean((predict(fit.cp, newdata=crimeTesting) - crimeTesting$ViolentCrimesPerPop)^2)
+```
+
+The validation set error for m1 is 1.899%.
+
+**LOOCV**
+```{r}
+library(boot)
+glmfit.cp <- glm(ViolentCrimesPerPop~state+racePctBlack+racePctHisp+agePct65up+pctUrban+pctWPubAsst+pctWRetire+IndianPerCap+AsianPerCap+PctEmplManu+PctEmplProfServ+MalePctDivorce+PctYoungKids2Par+PctTeen2Par+NumIlleg+PctRecentImmit+PctLargHouseFam+HousVacant+PctHousOccup+PctHousOwnOcc+PctVacantBoarded+MedRentPctHousInc+MedOwnCostPctIncNoMtg+NumStreet+PctSameCity85+LemasPctOfficDrugUn, data=crime)
+LOOCV.cp <- cv.glm(crime, glmfit.cp)$delta[1]
+print(LOOCV.cp)
+```
+
+LOOCV gives us a test error of 1.896% for m1.
+
+###**Model 2: best BIC model**
+This is a 12-variable model
+```{r}
+add.bic <- c()
+for(i in 1:59)
+{
+  if(resforward$which[12,i] == "TRUE")
+    add.bic <- c(add.bic, names(crime[i-1]))
+}
+
+for(i in 1:length(add.bic))
+{
+  print(as.symbol(add.bic[i]))
+}
+```
+```{r}
+fit.bic <- lm(ViolentCrimesPerPop~state+racePctBlack+racePctHisp+pctUrban+pctWPubAsst+MalePctDivorce+PctYoungKids2Par+PctTeen2Par+PctLargHouseFam+HousVacant+MedRentPctHousInc+NumStreet, data=crimeTraining)
+summary(fit.bic)
+```
+
+*Residual plots for m2*
+```{r}
+par(mfrow=c(2,2))
+plot(fit.bic)
+```
+
+**Cp, BIC, and adjusted R-squared**
+```{r}
+cat("Cp: ", resforward$cp[12])
+```
+```{r}
+cat("BIC: ", resforward$bic[12])
+```
+```{r}
+cat("adjusted R-squared: ", resforward$adjr2[12])
+```
+
+**Validation set error**
+```{r}
+mean((predict(fit.bic, newdata=crimeTesting) - crimeTesting$ViolentCrimesPerPop)^2)
+```
+The validation set error for m2 is 1.895%.
+
+**LOOCV**
+```{r}
+glmfit.bic <- glm(ViolentCrimesPerPop~state+racePctBlack+racePctHisp+pctUrban+pctWPubAsst+MalePctDivorce+PctYoungKids2Par+PctTeen2Par+PctLargHouseFam+HousVacant+MedRentPctHousInc+NumStreet, data=crime)
+LOOCV.bic <- cv.glm(crime, glmfit.bic)$delta[1]
+print(LOOCV.bic)
+```
+
+LOOCV gives us a test error of 1.927% for m2.
+
+###**Model 3: best adjusted R-squared**
+This is a 36-variable model.
+```{r}
+remove.adj <- c()
+for(i in 1:59)
+{
+  if(resforward$which[36,i] == "FALSE")
+    remove.adj <- c(remove.adj, names(crime[i-1]))
+}
+
+for(i in 1:length(remove.adj))
+{
+  print(as.symbol(remove.adj[i]))
+}
+```
+```{r}
+fit.adj <- lm(ViolentCrimesPerPop~.-fold-racePctAsian-agePct12t21-HispPerCap-PctLess9thGrade-PctOccupManu-MalePctNevMarr-PctWorkMomYoungKids-PctWorkMom-PctImmigRecent-PctImmigRec10-PctVacMore6Mos-MedYrHousBuilt-PctHousNoPhone-PctWOFullPlumb-OwnOccHiQuart-RentLowQ-PctBornSameState-PctSameState85-LandArea-PopDens-PctUsePubTrans, data=crimeTraining)
+summary(fit.adj)
+```
+
+*Residual plots for m2*
+```{r}
+par(mfrow=c(2,2))
+plot(fit.adj)
+```
+
+**Cp, BIC, and adjusted R-squared**
+```{r}
+cat("Cp: ", resforward$cp[36])
+```
+```{r}
+cat("BIC: ", resforward$bic[36])
+```
+```{r}
+cat("adjusted R-squared: ", resforward$adjr2[36])
+```
+
+**Validation set error**
+```{r}
+mean((predict(fit.adj, newdata=crimeTesting) - crimeTesting$ViolentCrimesPerPop)^2)
+```
+
+The validation set error for m3 is 1.909%.
+
+**LOOCV**
+```{r}
+glmfit.adj <- glm(ViolentCrimesPerPop~.-fold-racePctAsian-agePct12t21-HispPerCap-PctLess9thGrade-PctOccupManu-MalePctNevMarr-PctWorkMomYoungKids-PctWorkMom-PctImmigRecent-PctImmigRec10-PctVacMore6Mos-MedYrHousBuilt-PctHousNoPhone-PctWOFullPlumb-OwnOccHiQuart-RentLowQ-PctBornSameState-PctSameState85-LandArea-PopDens-PctUsePubTrans, data=crime)
+LOOCV.adj <- cv.glm(crime, glmfit.adj)$delta[1]
+print(LOOCV.adj)
+```
+
+LOOCV gives us a test error of 1.898% for m3.
+
+##Ridge Regression
+```{r}
+library(glmnet)
+library(foreach)
+
+x <- model.matrix(ViolentCrimesPerPop~., data = crimeTraining)[,-1]
+y <- crimeTraining$ViolentCrimesPerPop
+
+set.seed(1)
+cv.ridge <- cv.glmnet(x, y, alpha = 0)
+bestlam.ridge <- cv.ridge$lambda.min
+plot(cv.ridge)
+```
+```{r}
+ridge.fit <-glmnet(x, y, alpha = 0, lambda = bestlam.ridge)
+coef(ridge.fit)
+```
+
+**Validation set error**
+```{r}
+xTest <- model.matrix(ViolentCrimesPerPop~., data=crimeTesting)[,-1]
+yTest <- crimeTesting$ViolentCrimesPerPop
+mean((predict(ridge.fit, s = bestlam.ridge, newx=xTest) - yTest)^2)
+```
+
+The validation set error for m4 is 1.894%.
+
+**LOOCV**
+```{r}
+loocv.ridge <- c()
+for(i in 1:nrow(crime))
+{
+  x <- model.matrix(ViolentCrimesPerPop~., data = crime[-i,])[,-1]
+  y <- crime[-i,]$ViolentCrimesPerPop
+  loocv.ridge <- c(loocv.ridge, mean((predict(ridge.fit, s = bestlam.ridge, newx=x) - y)^2))
+}
+
+mean(loocv.ridge)
+```
+
+LOOCV gives us a test error of 1.863% for m4.
+
+##Lasso Regression
+```{r}
+cv.lasso <- cv.glmnet(x, y, alpha = 1)
+bestlam.lasso <- cv.lasso$lambda.min
+plot(cv.lasso)
+```
+```{r}
+lasso.fit <- glmnet(x, y, alpha = 1, lambda = bestlam.lasso)
+coef.lasso <- predict(lasso.fit, type = "coefficients", s=bestlam.lasso)[1:59,]
+coef.lasso[coef.lasso != 0]
+```
+
+**Validation set error**
+```{r}
+mean((predict(lasso.fit, s = bestlam.lasso, newx=xTest) - yTest)^2)
+```
+
+The validation set error for m5 is 1.852%
+
+**LOOCV**
+```{r}
+loocv.lasso <- c()
+for(i in 1:nrow(crime))
+{
+  x <- model.matrix(ViolentCrimesPerPop~., data = crime[-i,])[,-1]
+  y <- crime[-i,]$ViolentCrimesPerPop
+  loocv.lasso <- c(loocv.lasso, mean((predict(lasso.fit, s = bestlam.lasso, newx=x) - y)^2))
+}
+
+mean(loocv.lasso)
+```
+
+LOOCV gives us a test error of 1.852% for m5.
+
+
+
+
+
+
+
